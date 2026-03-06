@@ -1,0 +1,85 @@
+{
+  "name": "@enkryptify/sdk",
+  "version": "0.0.0-development",
+  "description": "Official TypeScript SDK for Enkryptify — fetch and manage secrets from the Enkryptify API",
+  "keywords": [
+    "api",
+    "enkryptify",
+    "sdk",
+    "secrets",
+    "typescript"
+  ],
+  "homepage": "https://github.com/enkryptify/sdk#readme",
+  "bugs": {
+    "url": "https://github.com/enkryptify/sdk/issues"
+  },
+  "license": "MIT",
+  "author": "Enkryptify",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/enkryptify/sdk.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "check": "tsc --noEmit",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.0",
+    "@commitlint/config-conventional": "^19.8.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
+    "@vitest/coverage-v8": "^3.1.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^15.5.1",
+    "oxfmt": "^0.36.0",
+    "oxlint": "^0.16.6",
+    "semantic-release": "^24.2.3",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.2",
+    "vitest": "^3.1.1"
+  },
+  "lint-staged": {
+    "*.ts": [
+      "oxlint --fix",
+      "oxfmt --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "oxfmt --write"
+    ]
+  },
+  "packageManager": "pnpm@10.27.0",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
