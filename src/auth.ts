@@ -17,3 +17,11 @@ export class EnvAuthProvider implements EnkryptifyAuthProvider {
         storeToken(this, token);
     }
 }
+
+export class TokenAuthProvider implements EnkryptifyAuthProvider {
+    readonly _brand = "EnkryptifyAuthProvider" as const;
+
+    constructor(token: string) {
+        storeToken(this, token);
+    }
+}

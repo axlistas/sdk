@@ -1,10 +1,11 @@
 import type { EnkryptifyAuthProvider, EnkryptifyConfig, IEnkryptify, Secret } from "@/types";
-import { EnkryptifyError, SecretNotFoundError } from "@/errors";
-import { EnvAuthProvider } from "@/auth";
+import { EnkryptifyError, SecretNotFoundError, NotFoundError } from "@/errors";
+import { EnvAuthProvider, TokenAuthProvider } from "@/auth";
 import { EnkryptifyApi } from "@/api";
 import { SecretCache } from "@/cache";
 import { Logger } from "@/logger";
 import { retrieveToken } from "@/internal/token-store";
+import { TokenExchangeManager } from "@/token-exchange";
 
 export class Enkryptify implements IEnkryptify {
     #api: EnkryptifyApi;
@@ -19,14 +20,9 @@ export class Enkryptify implements IEnkryptify {
     #eagerCache: boolean;
     #destroyed = false;
     #eagerLoaded = false;
+    #tokenExchange: TokenExchangeManager | null = null;
 
     constructor(config: EnkryptifyConfig) {
-        if (!config.auth) {
-            throw new EnkryptifyError(
-                'Missing required config field "auth". Provide an auth provider via Enkryptify.fromEnv().\n' +
-                    "Docs: https://docs.enkryptify.com/sdk/configuration",
-            );
-        }
         if (!config.workspace) {
             throw new EnkryptifyError(
                 'Missing required config field "workspace". Provide a workspace slug or ID.\n' +
@@ -46,14 +42,33 @@ export class Enkryptify implements IEnkryptify {
             );
         }
 
-        // Validate auth provider has a token in the store
-        if (config.auth._brand !== "EnkryptifyAuthProvider") {
-            throw new EnkryptifyError(
-                "Invalid auth provider. Use Enkryptify.fromEnv() to create one.\n" +
-                    "Docs: https://docs.enkryptify.com/sdk/auth",
-            );
+        // Resolve auth provider: token option → auth option → env var
+        let auth: EnkryptifyAuthProvider;
+        if (config.token) {
+            Enkryptify.#validateTokenFormat(config.token);
+            auth = new TokenAuthProvider(config.token);
+        } else if (config.auth) {
+            if (config.auth._brand !== "EnkryptifyAuthProvider") {
+                throw new EnkryptifyError(
+                    "Invalid auth provider. Use Enkryptify.fromEnv() or pass a token option.\n" +
+                        "Docs: https://docs.enkryptify.com/sdk/auth",
+                );
+            }
+            auth = config.auth;
+        } else {
+            const envToken = process.env.ENKRYPTIFY_TOKEN;
+            if (!envToken) {
+                throw new EnkryptifyError(
+                    "No token provided. Set ENKRYPTIFY_TOKEN or pass token in options.\n" +
+                        "Docs: https://docs.enkryptify.com/sdk/auth",
+                );
+            }
+            Enkryptify.#validateTokenFormat(envToken);
+            auth = new TokenAuthProvider(envToken);
         }
-        retrieveToken(config.auth);
+
+        // Validate that the auth provider has a token in the store
+        retrieveToken(auth);
 
         this.#workspace = config.workspace;
         this.#project = config.project;
@@ -69,7 +84,12 @@ export class Enkryptify implements IEnkryptify {
         this.#cache = this.#cacheEnabled ? new SecretCache(cacheTtl) : null;
 
         const baseUrl = config.baseUrl ?? "https://api.enkryptify.com";
-        this.#api = new EnkryptifyApi(baseUrl, config.auth);
+        this.#api = new EnkryptifyApi(baseUrl, auth);
+
+        if (config.useTokenExchange) {
+            const staticToken = retrieveToken(auth);
+            this.#tokenExchange = new TokenExchangeManager(baseUrl, staticToken, auth, this.#logger);
+        }
 
         this.#logger.info(
             `Initialized for workspace "${this.#workspace}", project "${this.#project}", environment "${this.#environment}"`,
@@ -78,6 +98,24 @@ export class Enkryptify implements IEnkryptify {
 
     static fromEnv(): EnkryptifyAuthProvider {
         return new EnvAuthProvider();
+    }
+
+    static #validateTokenFormat(token: string): void {
+        if (!token) {
+            throw new EnkryptifyError("Token must be a non-empty string.\nDocs: https://docs.enkryptify.com/sdk/auth");
+        }
+
+        // Accept ek_live_ API tokens
+        if (token.startsWith("ek_live_")) return;
+
+        // Accept JWTs (three base64 segments separated by dots)
+        const dotCount = token.split(".").length - 1;
+        if (dotCount === 2) return;
+
+        throw new EnkryptifyError(
+            "Invalid token format. Expected an ek_live_ token or JWT.\n" +
+                "Docs: https://docs.enkryptify.com/sdk/auth#token-format",
+        );
     }
 
     async get(key: string, options?: { cache?: boolean }): Promise<string> {
@@ -93,6 +131,8 @@ export class Enkryptify implements IEnkryptify {
             }
             this.#logger.debug(`Cache miss for secret "${key}", fetching from API`);
         }
+
+        await this.#tokenExchange?.ensureToken();
 
         if (useCache && this.#eagerCache && !this.#eagerLoaded) {
             return this.#fetchAndCacheAll(key);
@@ -129,6 +169,8 @@ export class Enkryptify implements IEnkryptify {
             );
         }
 
+        await this.#tokenExchange?.ensureToken();
+
         const secrets = await this.#api.fetchAllSecrets(this.#workspace, this.#project, this.#environment);
 
         let count = 0;
@@ -146,6 +188,7 @@ export class Enkryptify implements IEnkryptify {
 
     destroy(): void {
         if (this.#destroyed) return;
+        this.#tokenExchange?.destroy();
         this.#cache?.clear();
         this.#destroyed = true;
         this.#logger.info("Client destroyed, all cached secrets cleared");
@@ -202,12 +245,9 @@ export class Enkryptify implements IEnkryptify {
             secret = await this.#api.fetchSecret(this.#workspace, this.#project, key, this.#environment);
             this.#logger.debug(`API responded with 1 secret(s) in ${Date.now() - start}ms`);
         } catch (error) {
-            if (error instanceof EnkryptifyError) {
-                // If it's a 404-like error (ApiError with status in message)
-                const msg = error.message;
-                if (msg.includes("HTTP 404")) {
-                    return this.#handleNotFound(key);
-                }
+            // NotFoundError is imported at the module level via @/errors
+            if (error instanceof NotFoundError) {
+                return this.#handleNotFound(key);
             }
             throw error;
         }

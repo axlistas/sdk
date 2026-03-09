@@ -1,5 +1,5 @@
 import type { EnkryptifyAuthProvider, Secret } from "@/types";
-import { AuthenticationError, ApiError } from "@/errors";
+import { AuthenticationError, AuthorizationError, NotFoundError, RateLimitError, ApiError } from "@/errors";
 import { retrieveToken } from "@/internal/token-store";
 
 export class EnkryptifyApi {
@@ -35,8 +35,20 @@ export class EnkryptifyApi {
             },
         });
 
-        if (response.status === 401 || response.status === 403) {
-            throw new AuthenticationError(response.status);
+        if (response.status === 401) {
+            throw new AuthenticationError();
+        }
+
+        if (response.status === 403) {
+            throw new AuthorizationError();
+        }
+
+        if (response.status === 404) {
+            throw new NotFoundError(method, endpoint);
+        }
+
+        if (response.status === 429) {
+            throw new RateLimitError(response.headers.get("Retry-After"));
         }
 
         if (!response.ok) {

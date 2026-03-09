@@ -42,11 +42,13 @@ export interface IEnkryptify {
 }
 
 export interface EnkryptifyConfig {
-    auth: EnkryptifyAuthProvider;
+    auth?: EnkryptifyAuthProvider;
+    token?: string;
     workspace: string;
     project: string;
     environment: string;
     baseUrl?: string;
+    useTokenExchange?: boolean;
     options?: {
         strict?: boolean;
         usePersonalValues?: boolean;
@@ -59,6 +61,12 @@ export interface EnkryptifyConfig {
     logger?: {
         level?: "debug" | "info" | "warn" | "error";
     };
+}
+
+export interface TokenExchangeResponse {
+    accessToken: string;
+    expiresIn: number;
+    tokenType: string;
 }
 
 export interface EnkryptifyAuthProvider {

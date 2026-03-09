@@ -62,10 +62,108 @@ describe("Enkryptify — config validation", () => {
         );
     });
 
-    it("throws on missing auth", () => {
+    it("throws when no token or auth provided", () => {
+        delete process.env.ENKRYPTIFY_TOKEN;
         expect(() => new Enkryptify({ ...makeConfig(), auth: undefined as unknown as EnkryptifyAuthProvider })).toThrow(
-            'Missing required config field "auth"',
+            "No token provided",
         );
+    });
+});
+
+describe("Enkryptify — token resolution", () => {
+    const originalEnv = process.env.ENKRYPTIFY_TOKEN;
+
+    afterEach(() => {
+        if (originalEnv !== undefined) {
+            process.env.ENKRYPTIFY_TOKEN = originalEnv;
+        } else {
+            delete process.env.ENKRYPTIFY_TOKEN;
+        }
+    });
+
+    it("accepts token option (ek_live_ format)", () => {
+        const client = new Enkryptify({
+            token: "ek_live_abc123",
+            workspace: "ws-1",
+            project: "prj-1",
+            environment: "env-1",
+            baseUrl: "https://api.test.com",
+            logger: { level: "error" },
+        });
+        expect(client).toBeInstanceOf(Enkryptify);
+        client.destroy();
+    });
+
+    it("accepts token option (JWT format)", () => {
+        const client = new Enkryptify({
+            token: "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig",
+            workspace: "ws-1",
+            project: "prj-1",
+            environment: "env-1",
+            baseUrl: "https://api.test.com",
+            logger: { level: "error" },
+        });
+        expect(client).toBeInstanceOf(Enkryptify);
+        client.destroy();
+    });
+
+    it("rejects invalid token format", () => {
+        expect(
+            () =>
+                new Enkryptify({
+                    token: "not-a-valid-token",
+                    workspace: "ws-1",
+                    project: "prj-1",
+                    environment: "env-1",
+                    logger: { level: "error" },
+                }),
+        ).toThrow("Invalid token format");
+    });
+
+    it("falls back to ENKRYPTIFY_TOKEN env var", () => {
+        process.env.ENKRYPTIFY_TOKEN = "ek_live_from_env";
+        const client = new Enkryptify({
+            workspace: "ws-1",
+            project: "prj-1",
+            environment: "env-1",
+            baseUrl: "https://api.test.com",
+            logger: { level: "error" },
+        });
+        expect(client).toBeInstanceOf(Enkryptify);
+        client.destroy();
+    });
+
+    it("token option takes priority over auth option", async () => {
+        const secrets = [makeSecret("KEY", "val", "env-1")];
+        fetchMock.mockResolvedValue(new Response(JSON.stringify(secrets), { status: 200 }));
+
+        const client = new Enkryptify({
+            token: "ek_live_priority",
+            auth: createAuth("ek_live_fallback"),
+            workspace: "ws-1",
+            project: "prj-1",
+            environment: "env-1",
+            baseUrl: "https://api.test.com",
+            logger: { level: "error" },
+        });
+        await client.get("KEY");
+
+        const opts = fetchMock.mock.calls[0]?.[1] as RequestInit;
+        expect(opts.headers).toHaveProperty("Authorization", "Bearer ek_live_priority");
+        client.destroy();
+    });
+
+    it("throws when no token source available", () => {
+        delete process.env.ENKRYPTIFY_TOKEN;
+        expect(
+            () =>
+                new Enkryptify({
+                    workspace: "ws-1",
+                    project: "prj-1",
+                    environment: "env-1",
+                    logger: { level: "error" },
+                }),
+        ).toThrow("No token provided");
     });
 });
 
@@ -253,6 +351,97 @@ describe("Enkryptify — personal value resolution", () => {
         const client = new Enkryptify(makeConfig({ options: { usePersonalValues: false } }));
         const value = await client.get("KEY");
         expect(value).toBe("shared-val");
+    });
+});
+
+describe("Enkryptify — token exchange", () => {
+    it("exchanges token before first API call when useTokenExchange=true", async () => {
+        const exchangeResponse = { accessToken: "jwt-token", expiresIn: 900, tokenType: "Bearer" };
+        const secrets = [makeSecret("KEY", "val", "env-1")];
+
+        fetchMock.mockImplementation((url: string) => {
+            if (url.includes("/v1/auth/exchange")) {
+                return Promise.resolve(new Response(JSON.stringify(exchangeResponse), { status: 200 }));
+            }
+            return Promise.resolve(new Response(JSON.stringify(secrets), { status: 200 }));
+        });
+
+        const client = new Enkryptify({
+            token: "ek_live_static",
+            workspace: "ws-1",
+            project: "prj-1",
+            environment: "env-1",
+            baseUrl: "https://api.test.com",
+            useTokenExchange: true,
+            logger: { level: "error" },
+        });
+
+        await client.get("KEY");
+
+        // First call should be the exchange
+        const exchangeUrl = fetchMock.mock.calls[0]?.[0] as string;
+        expect(exchangeUrl).toBe("https://api.test.com/v1/auth/exchange");
+        const exchangeOpts = fetchMock.mock.calls[0]?.[1] as RequestInit;
+        expect(exchangeOpts.headers).toHaveProperty("Authorization", "Bearer ek_live_static");
+
+        // Second call should use the JWT
+        const secretOpts = fetchMock.mock.calls[1]?.[1] as RequestInit;
+        expect(secretOpts.headers).toHaveProperty("Authorization", "Bearer jwt-token");
+
+        client.destroy();
+    });
+
+    it("falls back to static token if exchange fails", async () => {
+        const secrets = [makeSecret("KEY", "val", "env-1")];
+
+        fetchMock.mockImplementation((url: string) => {
+            if (url.includes("/v1/auth/exchange")) {
+                return Promise.resolve(new Response("Server Error", { status: 500 }));
+            }
+            return Promise.resolve(new Response(JSON.stringify(secrets), { status: 200 }));
+        });
+
+        const client = new Enkryptify({
+            token: "ek_live_static",
+            workspace: "ws-1",
+            project: "prj-1",
+            environment: "env-1",
+            baseUrl: "https://api.test.com",
+            useTokenExchange: true,
+            logger: { level: "error" },
+        });
+
+        const value = await client.get("KEY");
+        expect(value).toBe("val");
+
+        // Secret request should use static token as fallback
+        const secretOpts = fetchMock.mock.calls[1]?.[1] as RequestInit;
+        expect(secretOpts.headers).toHaveProperty("Authorization", "Bearer ek_live_static");
+
+        client.destroy();
+    });
+
+    it("does not exchange when useTokenExchange is false", async () => {
+        const secrets = [makeSecret("KEY", "val", "env-1")];
+        fetchMock.mockResolvedValue(new Response(JSON.stringify(secrets), { status: 200 }));
+
+        const client = new Enkryptify({
+            token: "ek_live_static",
+            workspace: "ws-1",
+            project: "prj-1",
+            environment: "env-1",
+            baseUrl: "https://api.test.com",
+            logger: { level: "error" },
+        });
+
+        await client.get("KEY");
+
+        // Only one call, no exchange
+        expect(fetchMock).toHaveBeenCalledTimes(1);
+        const url = fetchMock.mock.calls[0]?.[0] as string;
+        expect(url).not.toContain("/v1/auth/exchange");
+
+        client.destroy();
     });
 });
 

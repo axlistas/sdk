@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EnkryptifyApi } from "@/api";
-import { AuthenticationError, ApiError } from "@/errors";
+import { AuthenticationError, AuthorizationError, NotFoundError, RateLimitError, ApiError } from "@/errors";
 import { storeToken } from "@/internal/token-store";
 import type { EnkryptifyAuthProvider } from "@/types";
 
@@ -72,11 +72,26 @@ describe("EnkryptifyApi", () => {
         await expect(api.fetchAllSecrets("ws", "prj", "env")).rejects.toThrow(AuthenticationError);
     });
 
-    it("throws AuthenticationError on 403", async () => {
+    it("throws AuthorizationError on 403", async () => {
         fetchMock.mockResolvedValue(new Response("Forbidden", { status: 403 }));
         const api = new EnkryptifyApi("https://api.example.com", createAuth("tok"));
 
-        await expect(api.fetchAllSecrets("ws", "prj", "env")).rejects.toThrow(AuthenticationError);
+        await expect(api.fetchAllSecrets("ws", "prj", "env")).rejects.toThrow(AuthorizationError);
+    });
+
+    it("throws NotFoundError on 404", async () => {
+        fetchMock.mockResolvedValue(new Response("Not Found", { status: 404 }));
+        const api = new EnkryptifyApi("https://api.example.com", createAuth("tok"));
+
+        await expect(api.fetchAllSecrets("ws", "prj", "env")).rejects.toThrow(NotFoundError);
+    });
+
+    it("throws RateLimitError on 429", async () => {
+        const headers = new Headers({ "Retry-After": "30" });
+        fetchMock.mockResolvedValue(new Response("Too Many Requests", { status: 429, headers }));
+        const api = new EnkryptifyApi("https://api.example.com", createAuth("tok"));
+
+        await expect(api.fetchAllSecrets("ws", "prj", "env")).rejects.toThrow(RateLimitError);
     });
 
     it("throws ApiError on 500 with status in message", async () => {
