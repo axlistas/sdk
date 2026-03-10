@@ -6,22 +6,22 @@ Thank you for your interest in contributing! Please read our [Code of Conduct](C
 
 1. Clone the repository:
 
-   ```bash
-   git clone https://github.com/enkryptify/sdk.git
-   cd sdk
-   ```
+    ```bash
+    git clone https://github.com/enkryptify/sdk.git
+    cd sdk
+    ```
 
 2. Install dependencies:
 
-   ```bash
-   pnpm install
-   ```
+    ```bash
+    pnpm install
+    ```
 
 3. Verify your setup:
 
-   ```bash
-   pnpm check && pnpm lint && pnpm test && pnpm build
-   ```
+    ```bash
+    pnpm check && pnpm lint && pnpm test && pnpm build
+    ```
 
 ## Development Workflow
 

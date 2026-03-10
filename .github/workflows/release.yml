@@ -1,39 +1,39 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
+    push:
+        branches: [main]
 
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-  id-token: write
+    contents: write
+    issues: write
+    pull-requests: write
+    id-token: write
 
 jobs:
-  release:
-    runs-on: blacksmith-2vcpu-ubuntu-2404-arm
-    if: github.repository == 'enkryptify/sdk'
+    release:
+        runs-on: blacksmith-2vcpu-ubuntu-2404-arm
+        if: github.repository == 'enkryptify/sdk'
 
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
 
-      - uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
+            - uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          cache: pnpm
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+                  cache: pnpm
 
-      - run: pnpm install --frozen-lockfile
+            - run: pnpm install --frozen-lockfile
 
-      - name: Build
-        run: pnpm build
+            - name: Build
+              run: pnpm build
 
-      # - name: Release
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #     NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-      #   run: npx semantic-release
+            # - name: Release
+            #   env:
+            #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            #     NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+            #   run: npx semantic-release

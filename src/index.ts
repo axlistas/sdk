@@ -1,5 +1,12 @@
-export { Enkryptify } from "@/client";
-export { EnkryptifyError } from "@/errors";
-export type { EnkryptifyConfig, Secret } from "@/types";
-
-export { Enkryptify as default } from "./client";
+export { Enkryptify } from "@/enkryptify";
+export { Enkryptify as default } from "@/enkryptify";
+export {
+    EnkryptifyError,
+    SecretNotFoundError,
+    AuthenticationError,
+    AuthorizationError,
+    NotFoundError,
+    RateLimitError,
+    ApiError,
+} from "@/errors";
+export type { IEnkryptify, EnkryptifyConfig, EnkryptifyAuthProvider } from "@/types";

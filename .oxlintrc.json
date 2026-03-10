@@ -1,21 +1,21 @@
 {
-  "plugins": ["typescript", "import", "unicorn"],
-  "categories": {
-    "correctness": "error",
-    "suspicious": "warn"
-  },
-  "rules": {
-    "no-console": "warn",
-    "eqeqeq": "error",
-    "typescript/consistent-type-imports": "error"
-  },
-  "overrides": [
-    {
-      "files": ["tests/**/*.ts"],
-      "rules": {
-        "no-console": "off"
-      }
-    }
-  ],
-  "ignorePatterns": ["dist", "node_modules", "coverage"]
+    "plugins": ["typescript", "import", "unicorn"],
+    "categories": {
+        "correctness": "error",
+        "suspicious": "warn"
+    },
+    "rules": {
+        "no-console": "warn",
+        "eqeqeq": "error",
+        "typescript/consistent-type-imports": "error"
+    },
+    "overrides": [
+        {
+            "files": ["tests/**/*.ts"],
+            "rules": {
+                "no-console": "off"
+            }
+        }
+    ],
+    "ignorePatterns": ["dist", "node_modules", "coverage"]
 }
