@@ -1,6 +1,6 @@
 {
     "name": "@enkryptify/sdk",
-    "version": "0.0.0-development",
+    "version": "0.1.1",
     "description": "Official TypeScript SDK for Enkryptify — fetch and manage secrets from the Enkryptify API",
     "keywords": [
         "api",
@@ -38,6 +38,9 @@
                 "default": "./dist/index.cjs"
             }
         }
+    },
+    "publishConfig": {
+        "access": "public"
     },
     "scripts": {
         "build": "tsup",
