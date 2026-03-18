@@ -8,5 +8,6 @@ export {
     NotFoundError,
     RateLimitError,
     ApiError,
+    KubernetesAuthError,
 } from "@/errors";
-export type { IEnkryptify, EnkryptifyConfig, EnkryptifyAuthProvider } from "@/types";
+export type { IEnkryptify, EnkryptifyConfig, EnkryptifyAuthProvider, KubernetesAuthOptions } from "@/types";

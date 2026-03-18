@@ -65,6 +65,13 @@ export class RateLimitError extends EnkryptifyError {
     }
 }
 
+export class KubernetesAuthError extends EnkryptifyError {
+    constructor(message: string) {
+        super(`${message}\nDocs: https://docs.enkryptify.com/sdk/auth#kubernetes`);
+        this.name = "KubernetesAuthError";
+    }
+}
+
 export class ApiError extends EnkryptifyError {
     public readonly status: number;
 

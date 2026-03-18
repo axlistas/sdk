@@ -1,11 +1,19 @@
-import type { EnkryptifyAuthProvider, EnkryptifyConfig, IEnkryptify, Secret } from "@/types";
+import type {
+    EnkryptifyAuthProvider,
+    EnkryptifyConfig,
+    IEnkryptify,
+    KubernetesAuthOptions,
+    Secret,
+    TokenExchange,
+} from "@/types";
 import { EnkryptifyError, SecretNotFoundError, NotFoundError } from "@/errors";
-import { EnvAuthProvider, TokenAuthProvider } from "@/auth";
+import { EnvAuthProvider, KubernetesAuthProvider, TokenAuthProvider } from "@/auth";
 import { EnkryptifyApi } from "@/api";
 import { SecretCache } from "@/cache";
 import { Logger } from "@/logger";
 import { retrieveToken } from "@/internal/token-store";
 import { TokenExchangeManager } from "@/token-exchange";
+import { KubernetesExchangeManager } from "@/kubernetes-exchange";
 
 export class Enkryptify implements IEnkryptify {
     #api: EnkryptifyApi;
@@ -20,7 +28,7 @@ export class Enkryptify implements IEnkryptify {
     #eagerCache: boolean;
     #destroyed = false;
     #eagerLoaded = false;
-    #tokenExchange: TokenExchangeManager | null = null;
+    #tokenExchange: TokenExchange | null = null;
 
     constructor(config: EnkryptifyConfig) {
         if (!config.workspace) {
@@ -68,7 +76,10 @@ export class Enkryptify implements IEnkryptify {
         }
 
         // Validate that the auth provider has a token in the store
-        retrieveToken(auth);
+        // (skip for Kubernetes — token is deferred to first exchange)
+        if (!(auth instanceof KubernetesAuthProvider)) {
+            retrieveToken(auth);
+        }
 
         this.#workspace = config.workspace;
         this.#project = config.project;
@@ -83,10 +94,12 @@ export class Enkryptify implements IEnkryptify {
         this.#logger = new Logger(config.logger?.level ?? "info");
         this.#cache = this.#cacheEnabled ? new SecretCache(cacheTtl) : null;
 
-        const baseUrl = config.baseUrl ?? "https://api.enkryptify.com";
+        const baseUrl = config.baseUrl ?? process.env.ENKRYPTIFY_API_URL ?? "https://api.enkryptify.com";
         this.#api = new EnkryptifyApi(baseUrl, auth);
 
-        if (config.useTokenExchange) {
+        if (auth instanceof KubernetesAuthProvider) {
+            this.#tokenExchange = new KubernetesExchangeManager(baseUrl, auth, this.#workspace, this.#logger);
+        } else if (config.useTokenExchange) {
             const staticToken = retrieveToken(auth);
             this.#tokenExchange = new TokenExchangeManager(baseUrl, staticToken, auth, this.#logger);
         }
@@ -98,6 +111,10 @@ export class Enkryptify implements IEnkryptify {
 
     static fromEnv(): EnkryptifyAuthProvider {
         return new EnvAuthProvider();
+    }
+
+    static fromKubernetes(options?: KubernetesAuthOptions): KubernetesAuthProvider {
+        return new KubernetesAuthProvider(options);
     }
 
     static #validateTokenFormat(token: string): void {
