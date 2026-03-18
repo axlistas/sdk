@@ -1,6 +1,6 @@
 {
     "name": "@enkryptify/sdk",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Official TypeScript SDK for Enkryptify — fetch and manage secrets from the Enkryptify API",
     "keywords": [
         "api",

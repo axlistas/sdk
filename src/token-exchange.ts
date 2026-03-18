@@ -1,8 +1,8 @@
-import type { EnkryptifyAuthProvider, TokenExchangeResponse } from "@/types";
+import type { EnkryptifyAuthProvider, TokenExchange, TokenExchangeResponse } from "@/types";
 import type { Logger } from "@/logger";
 import { storeToken } from "@/internal/token-store";
 
-export class TokenExchangeManager {
+export class TokenExchangeManager implements TokenExchange {
     #baseUrl: string;
     #staticToken: string;
     #auth: EnkryptifyAuthProvider;

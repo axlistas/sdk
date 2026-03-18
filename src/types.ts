@@ -73,6 +73,15 @@ export interface EnkryptifyAuthProvider {
     readonly _brand: "EnkryptifyAuthProvider";
 }
 
+export interface KubernetesAuthOptions {
+    tokenPath?: string;
+}
+
+export interface TokenExchange {
+    ensureToken(): Promise<void>;
+    destroy(): void;
+}
+
 export interface SecretValue {
     environmentId: string;
     value: string;
