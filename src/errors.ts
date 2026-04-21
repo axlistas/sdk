@@ -131,3 +131,10 @@ export class ProxyValidationError extends EnkryptifyError {
         this.detail = detail;
     }
 }
+
+export class InterceptorError extends EnkryptifyError {
+    constructor(message: string) {
+        super(`${message}\nDocs: https://docs.enkryptify.com/sdk/interceptor`);
+        this.name = "InterceptorError";
+    }
+}

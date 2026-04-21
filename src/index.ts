@@ -11,6 +11,7 @@ export {
     KubernetesAuthError,
     ProxyError,
     ProxyValidationError,
+    InterceptorError,
 } from "@/errors";
 export type {
     IEnkryptify,
@@ -23,4 +24,7 @@ export type {
     ProxyRequestInit,
     ProxyRequestOptions,
     JsonValue,
+    InterceptorConfig,
+    InterceptorRule,
+    InterceptorUrlMatcher,
 } from "@/types";

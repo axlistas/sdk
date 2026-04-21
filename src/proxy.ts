@@ -25,7 +25,12 @@ export interface EnkryptifyProxyInit {
     isDestroyed: () => boolean;
 }
 
-interface ProxyWireBody {
+/**
+ * Internal wire format the SDK POSTs to the Enkryptify proxy service. Exported
+ * for reuse by the HTTP interceptor (which builds these directly). Not part
+ * of the public SDK surface — do not import from `@enkryptify/sdk`.
+ */
+export interface ProxyWireBody {
     url: string;
     method: ProxyMethod;
     headers?: Record<string, string>;
@@ -38,16 +43,85 @@ interface ProxyWireBody {
     };
 }
 
+/**
+ * Shared context needed to POST a `ProxyWireBody` to the proxy service.
+ * Passed to `sendProxyWire()` by both `EnkryptifyProxy` and `HttpInterceptor`.
+ */
+export interface ProxySendContext {
+    proxyUrl: string;
+    auth: EnkryptifyAuthProvider;
+    tokenExchange: TokenExchange | null;
+    logger: Logger;
+    isDestroyed: () => boolean;
+}
+
+/**
+ * Low-level: POSTs a pre-built wire body to the proxy service. Handles token
+ * exchange, Bearer auth, destroyed-guard, and debug logging. Returns the
+ * upstream `Response` verbatim (no status-based error mapping — see the notes
+ * on `EnkryptifyProxy.#send` for why).
+ */
+export async function sendProxyWire(
+    ctx: ProxySendContext,
+    body: ProxyWireBody,
+    signal: AbortSignal | null,
+): Promise<Response> {
+    if (ctx.isDestroyed()) {
+        throw new EnkryptifyError(
+            "This Enkryptify client has been destroyed. Create a new instance to continue.\n" +
+                "Docs: https://docs.enkryptify.com/sdk/lifecycle",
+        );
+    }
+
+    await ctx.tokenExchange?.ensureToken();
+
+    const token = retrieveToken(ctx.auth);
+
+    // Strip undefined fields from the wire body so we don't send `"body": null`
+    // when the user didn't specify one.
+    const wireBody: Record<string, unknown> = {
+        url: body.url,
+        method: body.method,
+        config: body.config,
+    };
+    if (body.headers !== undefined) wireBody.headers = body.headers;
+    if (body.body !== undefined) wireBody.body = body.body;
+
+    ctx.logger.debug(`Proxy request: ${body.method} ${body.url}`);
+    const start = Date.now();
+
+    const response = await fetch(ctx.proxyUrl, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(wireBody),
+        signal,
+    });
+
+    ctx.logger.debug(`Proxy responded with HTTP ${response.status} in ${Date.now() - start}ms`);
+
+    // Return the Response verbatim — whatever status, body, and headers it carries.
+    //
+    // The Proxy forwards upstream responses unchanged (2xx or not), so mapping status
+    // codes to typed errors here is fundamentally unsafe: an upstream 401 from the
+    // caller's target API (e.g. OpenWeatherMap rejecting its own API key) is
+    // indistinguishable on the wire from a proxy 401 (e.g. Enkryptify token expired),
+    // and translating both into AuthenticationError produced wrong, misleading errors.
+    //
+    // Callers handle non-2xx like native fetch: check `response.ok` / `response.status`
+    // and read the body. Proxy-layer errors are delivered as `{error: {code, message}}`
+    // JSON bodies that callers can parse for specifics.
+    return response;
+}
+
 export class EnkryptifyProxy implements IEnkryptifyProxy {
-    #proxyUrl: string;
-    #auth: EnkryptifyAuthProvider;
-    #tokenExchange: TokenExchange | null;
+    #ctx: ProxySendContext;
     #workspace: string;
     #project: string;
     #environment: string;
     #usePersonalValues: boolean;
-    #logger: Logger;
-    #isDestroyed: () => boolean;
 
     // Public-surface methods — rebound in the constructor so that
     // `const { fetch } = client.proxy` (the pattern users need for wiring into
@@ -56,18 +130,25 @@ export class EnkryptifyProxy implements IEnkryptifyProxy {
     request: (options: ProxyRequestOptions) => Promise<Response>;
 
     constructor(init: EnkryptifyProxyInit) {
-        this.#proxyUrl = init.proxyUrl;
-        this.#auth = init.auth;
-        this.#tokenExchange = init.tokenExchange;
+        this.#ctx = {
+            proxyUrl: init.proxyUrl,
+            auth: init.auth,
+            tokenExchange: init.tokenExchange,
+            logger: init.logger,
+            isDestroyed: init.isDestroyed,
+        };
         this.#workspace = init.workspace;
         this.#project = init.project;
         this.#environment = init.environment;
         this.#usePersonalValues = init.usePersonalValues;
-        this.#logger = init.logger;
-        this.#isDestroyed = init.isDestroyed;
 
         this.fetch = this.#fetchImpl.bind(this);
         this.request = this.#requestImpl.bind(this);
+    }
+
+    /** Internal: expose the shared context to the HTTP interceptor. */
+    get _ctx(): ProxySendContext {
+        return this.#ctx;
     }
 
     async #fetchImpl(input: string | URL, init?: ProxyRequestInit): Promise<Response> {
@@ -91,7 +172,8 @@ export class EnkryptifyProxy implements IEnkryptifyProxy {
             );
         }
 
-        return this.#send(
+        return sendProxyWire(
+            this.#ctx,
             {
                 url,
                 method,
@@ -127,7 +209,8 @@ export class EnkryptifyProxy implements IEnkryptifyProxy {
             usePersonal: options.usePersonal,
         });
 
-        return this.#send(
+        return sendProxyWire(
+            this.#ctx,
             {
                 url: options.url,
                 method,
@@ -151,57 +234,6 @@ export class EnkryptifyProxy implements IEnkryptifyProxy {
             "environment-id": overrides?.environment ?? this.#environment,
             "is-personal": overrides?.usePersonal ?? this.#usePersonalValues,
         };
-    }
-
-    async #send(body: ProxyWireBody, signal: AbortSignal | null): Promise<Response> {
-        if (this.#isDestroyed()) {
-            throw new EnkryptifyError(
-                "This Enkryptify client has been destroyed. Create a new instance to continue.\n" +
-                    "Docs: https://docs.enkryptify.com/sdk/lifecycle",
-            );
-        }
-
-        await this.#tokenExchange?.ensureToken();
-
-        const token = retrieveToken(this.#auth);
-
-        // Strip undefined fields from the wire body so we don't send `"body": null`
-        // when the user didn't specify one.
-        const wireBody: Record<string, unknown> = {
-            url: body.url,
-            method: body.method,
-            config: body.config,
-        };
-        if (body.headers !== undefined) wireBody.headers = body.headers;
-        if (body.body !== undefined) wireBody.body = body.body;
-
-        this.#logger.debug(`Proxy request: ${body.method} ${body.url}`);
-        const start = Date.now();
-
-        const response = await fetch(this.#proxyUrl, {
-            method: "POST",
-            headers: {
-                Authorization: `Bearer ${token}`,
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify(wireBody),
-            signal,
-        });
-
-        this.#logger.debug(`Proxy responded with HTTP ${response.status} in ${Date.now() - start}ms`);
-
-        // Return the Response verbatim — whatever status, body, and headers it carries.
-        //
-        // The Proxy forwards upstream responses unchanged (2xx or not), so mapping status
-        // codes to typed errors here is fundamentally unsafe: an upstream 401 from the
-        // caller's target API (e.g. OpenWeatherMap rejecting its own API key) is
-        // indistinguishable on the wire from a proxy 401 (e.g. Enkryptify token expired),
-        // and translating both into AuthenticationError produced wrong, misleading errors.
-        //
-        // Callers handle non-2xx like native fetch: check `response.ok` / `response.status`
-        // and read the body. Proxy-layer errors are delivered as `{error: {code, message}}`
-        // JSON bodies that callers can parse for specifics.
-        return response;
     }
 }
 
