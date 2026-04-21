@@ -15,7 +15,8 @@ import { Logger } from "@/logger";
 import { retrieveToken } from "@/internal/token-store";
 import { TokenExchangeManager } from "@/token-exchange";
 import { KubernetesExchangeManager } from "@/kubernetes-exchange";
-import { EnkryptifyProxy } from "@/proxy";
+import { EnkryptifyProxy, sendProxyWire } from "@/proxy";
+import { HttpInterceptor } from "@/interceptor";
 
 const DEFAULT_PROXY_URL = "https://proxy-poc-black.vercel.app";
 
@@ -35,6 +36,7 @@ export class Enkryptify implements IEnkryptify {
     #tokenExchange: TokenExchange | null = null;
     #proxy: EnkryptifyProxy;
     #proxyOnly: boolean;
+    #interceptor: HttpInterceptor | null = null;
 
     constructor(config: EnkryptifyConfig) {
         if (!config.workspace) {
@@ -124,6 +126,32 @@ export class Enkryptify implements IEnkryptify {
             isDestroyed: () => this.#destroyed,
         });
 
+        // HTTP interceptor: patches the Node HTTP stack so matching outbound
+        // requests from third-party SDKs (axios, got, OpenAI, Stripe, etc.)
+        // are rerouted through the Enkryptify proxy. Enabled when the user
+        // configures rules; disabled on destroy().
+        const interceptorConfig = config.interceptor;
+        if (interceptorConfig && interceptorConfig.enabled !== false && interceptorConfig.rules.length > 0) {
+            const proxyCtx = this.#proxy._ctx;
+            this.#interceptor = new HttpInterceptor({
+                config: interceptorConfig,
+                sendWire: (body, signal) => sendProxyWire(proxyCtx, body, signal),
+                defaults: {
+                    workspace: this.#workspace,
+                    project: this.#project,
+                    environment: this.#environment,
+                    usePersonalValues: this.#usePersonalValues,
+                },
+                logger: this.#logger,
+            });
+            // Fire-and-forget: dynamic import is async, but we don't want
+            // construction to be async. Any failure is logged; requests
+            // issued before `ready` resolves simply aren't intercepted.
+            this.#interceptor.enable().catch((err: unknown) => {
+                this.#logger.error(`Interceptor failed to enable: ${(err as Error).message}`);
+            });
+        }
+
         this.#logger.info(
             `Initialized for workspace "${this.#workspace}", project "${this.#project}", environment "${this.#environment}"`,
         );
@@ -132,6 +160,16 @@ export class Enkryptify implements IEnkryptify {
     get proxy(): IEnkryptifyProxy {
         this.#guardDestroyed();
         return this.#proxy;
+    }
+
+    /**
+     * @internal Resolves once the HTTP interceptor has patched the global
+     * HTTP stack (or immediately if no interceptor was configured). Exposed
+     * for tests and for users who want to guarantee interception before
+     * issuing their first request.
+     */
+    _interceptorReady(): Promise<void> {
+        return this.#interceptor?.ready ?? Promise.resolve();
     }
 
     static fromEnv(): EnkryptifyAuthProvider {
@@ -233,6 +271,8 @@ export class Enkryptify implements IEnkryptify {
 
     destroy(): void {
         if (this.#destroyed) return;
+        this.#interceptor?.disable();
+        this.#interceptor = null;
         this.#tokenExchange?.destroy();
         this.#cache?.clear();
         this.#destroyed = true;

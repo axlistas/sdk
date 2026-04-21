@@ -71,6 +71,7 @@ export interface EnkryptifyConfig {
         level?: "debug" | "info" | "warn" | "error";
     };
     proxy?: ProxyConfig;
+    interceptor?: InterceptorConfig;
 }
 
 export interface TokenExchangeResponse {
@@ -185,4 +186,100 @@ export interface IEnkryptifyProxy {
      * typed JSON body.
      */
     request(options: ProxyRequestOptions): Promise<Response>;
+}
+
+/**
+ * Matches an outbound HTTP request against an interceptor rule.
+ *
+ * - `string`: prefix match against the full request URL. Example:
+ *   `"https://api.openai.com/"` matches any URL starting with that.
+ * - `RegExp`: tested against the full request URL.
+ * - Predicate: custom escape hatch — receives the URL string and the
+ *   intercepted `Request` object.
+ */
+export type InterceptorUrlMatcher = string | RegExp | ((url: string, request: Request) => boolean);
+
+/**
+ * A single interceptor rule. When `match` fires on an outbound request, the
+ * request is rewritten to go through the Enkryptify proxy with the provided
+ * header/URL/body substitutions. `%VARIABLE%` placeholders in header values,
+ * URL template, and body are passed through to the proxy verbatim; the proxy
+ * resolves them server-side so secrets never enter the caller's process.
+ */
+export interface InterceptorRule {
+    /** Display name used in debug/warn logs. Optional. */
+    name?: string;
+
+    /** Which outbound URLs this rule captures. */
+    match: InterceptorUrlMatcher;
+
+    /**
+     * Optional URL rewrite sent to the proxy. May contain `%VARIABLE%`
+     * placeholders. The following simple template tokens are substituted
+     * from the intercepted URL when present:
+     *   - `{origin}` — protocol + host (e.g. `https://api.example.com`)
+     *   - `{host}`   — host only (e.g. `api.example.com`)
+     *   - `{path}`   — pathname (e.g. `/v1/models`)
+     *   - `{search}` — query string including leading `?` (or empty)
+     *
+     * When omitted, the intercepted URL is forwarded as-is.
+     */
+    url?: string;
+
+    /**
+     * Header overrides. Values may contain `%VARIABLE%` placeholders. These
+     * are merged OVER the intercepted request's headers (case-insensitive).
+     * Explicit `undefined` deletes the header before the proxy call.
+     */
+    headers?: Record<string, string | undefined>;
+
+    /**
+     * Body override. Accepts:
+     *   - a `JsonValue` (plain object/array/primitive) — replaces the body wholesale
+     *   - a JSON-encoded string — parsed before being forwarded
+     *   - a function that receives the parsed intercepted body and returns the replacement
+     *
+     * Omit to forward the intercepted body verbatim (JSON only — see
+     * `onUnsupportedBody` for non-JSON handling).
+     */
+    body?: JsonValue | string | ((intercepted: JsonValue | undefined) => JsonValue | undefined);
+
+    /** Override the client's workspace for this rule. */
+    workspace?: string;
+    /** Override the client's project for this rule. */
+    project?: string;
+    /** Override the client's environment for this rule. */
+    environment?: string;
+    /** Override the client's `usePersonalValues` setting for this rule. */
+    usePersonal?: boolean;
+
+    /**
+     * How to handle intercepted requests whose body cannot be represented on
+     * the proxy wire (streams, Blob, FormData, URLSearchParams, ArrayBuffer,
+     * typed arrays, non-JSON strings).
+     *
+     *   - `"passthrough"` (default): let the original request reach the network
+     *     unmodified and log a warning.
+     *   - `"error"`: fail the intercepted request with an `InterceptorError`.
+     */
+    onUnsupportedBody?: "passthrough" | "error";
+}
+
+/**
+ * Interceptor configuration. When enabled, the SDK patches the Node HTTP
+ * stack (via `@mswjs/interceptors`) and reroutes matching outbound requests
+ * through the Enkryptify proxy. The patching is reversed on `client.destroy()`.
+ */
+export interface InterceptorConfig {
+    /**
+     * Explicitly enable/disable the interceptor. Defaults to `true` when
+     * `rules` is non-empty.
+     */
+    enabled?: boolean;
+
+    /**
+     * Ordered list of rules. The first matching rule wins; non-matching
+     * requests pass through to the network unmodified.
+     */
+    rules: InterceptorRule[];
 }

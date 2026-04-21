@@ -55,6 +55,9 @@
         "typecheck": "tsc --noEmit",
         "prepare": "husky"
     },
+    "dependencies": {
+        "@mswjs/interceptors": "^0.41.4"
+    },
     "devDependencies": {
         "@commitlint/cli": "^19.8.0",
         "@commitlint/config-conventional": "^19.8.0",
@@ -79,6 +82,9 @@
         "*.{json,md,yml,yaml}": [
             "oxfmt --write"
         ]
+    },
+    "engines": {
+        "node": ">=18"
     },
     "packageManager": "pnpm@10.27.0",
     "pnpm": {
