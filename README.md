@@ -175,7 +175,6 @@ const res = await client.proxy.request({
     body: { user: "%USER_ID%" },
     // Optional per-call overrides:
     // environment: "other-env-id",
-    // usePersonal: false,
 });
 ```
 

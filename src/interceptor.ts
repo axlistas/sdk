@@ -33,7 +33,6 @@ export interface HttpInterceptorInit {
         workspace: string;
         project: string;
         environment: string;
-        usePersonalValues: boolean;
     };
     logger: Logger;
 }
@@ -215,12 +214,9 @@ export class HttpInterceptor {
             method,
             headers: mergedHeaders,
             body: finalBody,
-            config: {
-                workspace: rule.workspace ?? this.#defaults.workspace,
-                project: rule.project ?? this.#defaults.project,
-                "environment-id": rule.environment ?? this.#defaults.environment,
-                "is-personal": rule.usePersonal ?? this.#defaults.usePersonalValues,
-            },
+            workspace: rule.workspace ?? this.#defaults.workspace,
+            project: rule.project ?? this.#defaults.project,
+            "environment-id": rule.environment ?? this.#defaults.environment,
         };
     }
 
