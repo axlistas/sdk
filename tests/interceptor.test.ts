@@ -78,7 +78,7 @@ async function findProxyCall(fetchMock: ReturnType<typeof vi.fn>): Promise<Recor
         if (!parsed) continue;
         // mswjs sometimes normalises the URL with a trailing slash when it
         // runs through URL(); accept both shapes.
-        if (parsed.url === "https://proxy.test.com" || parsed.url === "https://proxy.test.com/") {
+        if (parsed.url.startsWith("https://proxy.test.com/")) {
             if (parsed.bodyText === null) return null;
             try {
                 return JSON.parse(parsed.bodyText) as Record<string, unknown>;
@@ -359,7 +359,7 @@ describe("interceptor — rule matching", () => {
 });
 
 describe("interceptor — ProxyWireBody shape", () => {
-    it("includes config block with client defaults", async () => {
+    it("puts client default context in the proxy URL path", async () => {
         fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
 
         activeClient = new Enkryptify(
@@ -377,16 +377,12 @@ describe("interceptor — ProxyWireBody shape", () => {
 
         await fetch("https://api.example.com/v1");
 
-        const wire = await findProxyCall(fetchMock);
-        expect(wire?.config).toEqual({
-            workspace: "ws-x",
-            project: "prj-y",
-            "environment-id": "env-z",
-            "is-personal": false,
-        });
+        await findProxyCall(fetchMock);
+        const proxyCall = await findCallByUrlPrefix(fetchMock, "https://proxy.test.com/");
+        expect(proxyCall?.url).toBe("https://proxy.test.com/ws-x/prj-y/env-z");
     });
 
-    it("rule-level workspace/project/environment/usePersonal override defaults", async () => {
+    it("rule-level workspace/project/environment override defaults", async () => {
         fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
 
         activeClient = new Enkryptify(
@@ -399,7 +395,6 @@ describe("interceptor — ProxyWireBody shape", () => {
                             workspace: "override-ws",
                             project: "override-prj",
                             environment: "override-env",
-                            usePersonal: false,
                         },
                     ],
                 },
@@ -409,13 +404,9 @@ describe("interceptor — ProxyWireBody shape", () => {
 
         await fetch("https://api.example.com/v1");
 
-        const wire = await findProxyCall(fetchMock);
-        expect(wire?.config).toEqual({
-            workspace: "override-ws",
-            project: "override-prj",
-            "environment-id": "override-env",
-            "is-personal": false,
-        });
+        await findProxyCall(fetchMock);
+        const proxyCall = await findCallByUrlPrefix(fetchMock, "https://proxy.test.com/");
+        expect(proxyCall?.url).toBe("https://proxy.test.com/override-ws/override-prj/override-env");
     });
 
     it("sends Authorization: Bearer <token> on the proxy call", async () => {
