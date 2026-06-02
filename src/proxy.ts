@@ -338,7 +338,7 @@ const HOP_BY_HOP_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
     "proxy-authenticate",
     "proxy-authorization",
     "te",
-    "trailers",
+    "trailer",
     "upgrade",
 ]);
 

@@ -428,6 +428,7 @@ describe("client.proxy — envelope unwrap (upstream response)", () => {
 
         const res = await client.proxy.fetch("https://upstream/x");
         expect(res.headers.get("transfer-encoding")).toBeNull();
+        expect(res.headers.get("content-length")).toBeNull();
         expect(res.headers.get("x-custom")).toBe("keep");
     });
 });
