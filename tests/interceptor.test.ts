@@ -1,8 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { Enkryptify, InterceptorError } from "@/index";
+import { Enkryptify, InterceptorError, ProxyError } from "@/index";
 import { storeToken } from "@/internal/token-store";
 import { mergeHeaders, resolveBody, templateUrl } from "@/internal/template";
 import type { EnkryptifyAuthProvider, EnkryptifyConfig } from "@/types";
+
+/**
+ * Build the response shape the real Enkryptify proxy returns on success:
+ * HTTP 200 wrapping the upstream status/headers/body in a JSON envelope.
+ */
+function envelope(body: unknown = {}, upstreamStatus = 200, upstreamHeaders: Record<string, string> = {}): Response {
+    return new Response(JSON.stringify({ status: upstreamStatus, headers: upstreamHeaders, body }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+    });
+}
+
+/** Default no-op proxy success response used by tests that only care about the wire body. */
+function okEnvelope(): Response {
+    return envelope({}, 200, {});
+}
 
 function createAuth(token = "ek_test"): EnkryptifyAuthProvider {
     const auth = { _brand: "EnkryptifyAuthProvider" as const };
@@ -233,7 +249,7 @@ afterEach(() => {
 
 describe("interceptor — rule matching", () => {
     it("string prefix match routes fetch call through the proxy", async () => {
-        fetchMock.mockResolvedValue(new Response('{"ok":true}', { status: 200 }));
+        fetchMock.mockResolvedValue(envelope({ ok: true }, 200));
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -261,7 +277,7 @@ describe("interceptor — rule matching", () => {
     });
 
     it("regex match routes request through the proxy", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -286,7 +302,7 @@ describe("interceptor — rule matching", () => {
     });
 
     it("predicate match routes request through the proxy", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
         const predicate = vi.fn((url: string) => url.includes("twilio.com"));
 
         activeClient = new Enkryptify(
@@ -311,7 +327,7 @@ describe("interceptor — rule matching", () => {
     });
 
     it("non-matching URL passes through to the real target without proxy involvement", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -336,7 +352,7 @@ describe("interceptor — rule matching", () => {
     });
 
     it("first matching rule wins when multiple rules overlap", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -360,7 +376,7 @@ describe("interceptor — rule matching", () => {
 
 describe("interceptor — ProxyWireBody shape", () => {
     it("puts client default context in the proxy URL path", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -384,7 +400,7 @@ describe("interceptor — ProxyWireBody shape", () => {
     });
 
     it("rule-level workspace/project/environment/usePersonal override defaults", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -413,7 +429,7 @@ describe("interceptor — ProxyWireBody shape", () => {
     });
 
     it("sends Authorization: Bearer <token> on the proxy call", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -442,7 +458,7 @@ describe("interceptor — ProxyWireBody shape", () => {
 
 describe("interceptor — substitution", () => {
     it("URL template rewrites host and preserves path/search + %VAR% tokens", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -466,7 +482,7 @@ describe("interceptor — substitution", () => {
     });
 
     it("header override merges with intercepted headers (case-insensitive)", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -488,7 +504,7 @@ describe("interceptor — substitution", () => {
     });
 
     it("undefined header override deletes the header", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -515,7 +531,7 @@ describe("interceptor — substitution", () => {
     });
 
     it("object body override replaces the intercepted body wholesale", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -542,7 +558,7 @@ describe("interceptor — substitution", () => {
     });
 
     it("function body override receives the intercepted body", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
         const bodyOverride = vi.fn((input: unknown) => ({
             ...(input as object),
             injected: "%SECRET%",
@@ -569,7 +585,7 @@ describe("interceptor — substitution", () => {
     });
 
     it("intercepted JSON body is forwarded verbatim when no body override is set", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -591,15 +607,10 @@ describe("interceptor — substitution", () => {
     });
 });
 
-describe("interceptor — response passthrough", () => {
-    it("returns the proxy's response body to the caller", async () => {
+describe("interceptor — upstream response delivery", () => {
+    it("delivers the unwrapped upstream body to the caller", async () => {
         const upstream = { data: [{ id: "1" }] };
-        fetchMock.mockResolvedValue(
-            new Response(JSON.stringify(upstream), {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-            }),
-        );
+        fetchMock.mockResolvedValue(envelope(upstream, 200, { "content-type": "application/json" }));
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -615,8 +626,8 @@ describe("interceptor — response passthrough", () => {
         expect(await response.json()).toEqual(upstream);
     });
 
-    it("non-2xx proxy response is returned as Response without throwing", async () => {
-        fetchMock.mockResolvedValue(new Response("boom", { status: 500, statusText: "Internal Error" }));
+    it("preserves upstream non-2xx status (e.g. 401 from the target API) without throwing", async () => {
+        fetchMock.mockResolvedValue(envelope({ cod: 401, message: "Invalid API key" }, 401));
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -629,14 +640,34 @@ describe("interceptor — response passthrough", () => {
 
         const response = await fetch("https://api.example.com/v1");
         expect(response.ok).toBe(false);
-        expect(response.status).toBe(500);
-        expect(await response.text()).toBe("boom");
+        expect(response.status).toBe(401);
+        expect(await response.json()).toEqual({ cod: 401, message: "Invalid API key" });
+    });
+
+    it("proxy-layer 5xx surfaces as a thrown ProxyError on the intercepted fetch", async () => {
+        fetchMock.mockResolvedValue(
+            new Response(JSON.stringify({ error: "proxy down" }), {
+                status: 502,
+                headers: { "content-type": "application/json" },
+            }),
+        );
+
+        activeClient = new Enkryptify(
+            makeConfig({
+                interceptor: {
+                    rules: [{ match: "https://api.example.com/", headers: { authorization: "Bearer %K%" } }],
+                },
+            }),
+        );
+        await activeClient._interceptorReady();
+
+        await expect(fetch("https://api.example.com/v1")).rejects.toBeInstanceOf(ProxyError);
     });
 });
 
 describe("interceptor — unsupported bodies", () => {
     it("by default, passes a URLSearchParams body through without interception", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -658,7 +689,7 @@ describe("interceptor — unsupported bodies", () => {
     });
 
     it('fails the request when onUnsupportedBody: "error" and body is not JSON', async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -686,7 +717,7 @@ describe("interceptor — unsupported bodies", () => {
 
 describe("interceptor — lifecycle", () => {
     it("destroy() disables interception; subsequent matched URLs hit the real target", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         const client = new Enkryptify(
             makeConfig({
@@ -705,7 +736,7 @@ describe("interceptor — lifecycle", () => {
 
         // After destroy: fresh mock to simplify assertion.
         fetchMock.mockClear();
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         await fetch("https://api.example.com/v1");
 
@@ -716,7 +747,7 @@ describe("interceptor — lifecycle", () => {
     });
 
     it("no interceptor is attached when rules array is empty", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -731,7 +762,7 @@ describe("interceptor — lifecycle", () => {
     });
 
     it("no interceptor is attached when config.interceptor is omitted", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(makeConfig());
         await activeClient._interceptorReady();
@@ -742,7 +773,7 @@ describe("interceptor — lifecycle", () => {
     });
 
     it("enabled: false disables the interceptor even when rules are present", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({
@@ -776,7 +807,7 @@ describe("interceptor — errors", () => {
     });
 
     it("passthrough when a rule matcher throws", async () => {
-        fetchMock.mockResolvedValue(new Response("{}", { status: 200 }));
+        fetchMock.mockResolvedValue(okEnvelope());
 
         activeClient = new Enkryptify(
             makeConfig({

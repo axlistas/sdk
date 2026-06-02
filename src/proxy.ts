@@ -7,7 +7,14 @@ import type {
     ProxyRequestOptions,
     TokenExchange,
 } from "@/types";
-import { EnkryptifyError } from "@/errors";
+import {
+    AuthenticationError,
+    AuthorizationError,
+    EnkryptifyError,
+    ProxyError,
+    ProxyValidationError,
+    RateLimitError,
+} from "@/errors";
 import type { Logger } from "@/logger";
 import { retrieveToken } from "@/internal/token-store";
 
@@ -101,18 +108,12 @@ export async function sendProxyWire(
 
     ctx.logger.debug(`Proxy responded with HTTP ${response.status} in ${Date.now() - start}ms`);
 
-    // Return the Response verbatim — whatever status, body, and headers it carries.
-    //
-    // The Proxy forwards upstream responses unchanged (2xx or not), so mapping status
-    // codes to typed errors here is fundamentally unsafe: an upstream 401 from the
-    // caller's target API (e.g. OpenWeatherMap rejecting its own API key) is
-    // indistinguishable on the wire from a proxy 401 (e.g. Enkryptify token expired),
-    // and translating both into AuthenticationError produced wrong, misleading errors.
-    //
-    // Callers handle non-2xx like native fetch: check `response.ok` / `response.status`
-    // and read the body. Proxy-layer errors are delivered as `{error: {code, message}}`
-    // JSON bodies that callers can parse for specifics.
-    return response;
+    if (!response.ok) {
+        const detail = await readProxyErrorDetail(response);
+        throw mapProxyError(response.status, response.statusText, response.headers.get("retry-after"), detail);
+    }
+
+    return unwrapUpstreamResponse(response);
 }
 
 export class EnkryptifyProxy implements IEnkryptifyProxy {
@@ -312,4 +313,127 @@ function bodyTypeError(typeName: string): EnkryptifyError {
 function buildProxyRequestUrl(baseUrl: string, workspace: string, project: string, environmentId: string): string {
     const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
     return `${normalizedBaseUrl}/${encodeURIComponent(workspace)}/${encodeURIComponent(project)}/${encodeURIComponent(environmentId)}`;
+}
+
+/**
+ * Response envelope produced by the Enkryptify proxy service when it
+ * successfully forwards a request upstream. The proxy always returns HTTP 200
+ * on success and conveys the upstream status / headers / body via this object.
+ */
+interface ProxyResponseEnvelope {
+    status: number;
+    headers?: Record<string, string>;
+    body?: unknown;
+}
+
+/**
+ * Hop-by-hop and length-related headers that would be incorrect after we
+ * re-encode the body. RFC 7230 §6.1 names these as connection-specific.
+ */
+const HOP_BY_HOP_RESPONSE_HEADERS: ReadonlySet<string> = new Set([
+    "connection",
+    "content-length",
+    "transfer-encoding",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailers",
+    "upgrade",
+]);
+
+function isProxyResponseEnvelope(value: unknown): value is ProxyResponseEnvelope {
+    return (
+        typeof value === "object" &&
+        value !== null &&
+        "status" in value &&
+        typeof (value as { status: unknown }).status === "number"
+    );
+}
+
+/**
+ * Convert the proxy's `{ status, headers, body }` envelope into a real upstream
+ * `Response`. The returned object behaves exactly like the upstream API's own
+ * response would have, so callers can use `await res.json()`, `res.ok`, etc.
+ */
+async function unwrapUpstreamResponse(proxyResponse: Response): Promise<Response> {
+    let envelope: ProxyResponseEnvelope;
+    try {
+        const parsed = (await proxyResponse.json()) as unknown;
+        if (!isProxyResponseEnvelope(parsed)) {
+            throw new ProxyError(
+                proxyResponse.status,
+                proxyResponse.statusText,
+                "Proxy returned a 2xx response without the expected `{ status, headers, body }` envelope.",
+            );
+        }
+        envelope = parsed;
+    } catch (err) {
+        if (err instanceof EnkryptifyError) throw err;
+        throw new ProxyError(
+            proxyResponse.status,
+            proxyResponse.statusText,
+            `Failed to parse proxy response: ${err instanceof Error ? err.message : String(err)}`,
+        );
+    }
+
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(envelope.headers ?? {})) {
+        if (HOP_BY_HOP_RESPONSE_HEADERS.has(key.toLowerCase())) continue;
+        headers.set(key, value);
+    }
+
+    // 204 / 205 / 304 must not have a body per the Fetch spec — passing one to
+    // the Response constructor throws TypeError.
+    const status = envelope.status;
+    const noBodyStatus = status === 204 || status === 205 || status === 304;
+    const body = envelope.body;
+
+    let bodyInit: BodyInit | null = null;
+    if (!noBodyStatus && body !== null && body !== undefined) {
+        if (typeof body === "string") {
+            bodyInit = body;
+        } else {
+            // Object / array / number / boolean → JSON.
+            bodyInit = JSON.stringify(body);
+            if (!headers.has("content-type")) {
+                headers.set("content-type", "application/json; charset=utf-8");
+            }
+        }
+    }
+
+    return new Response(bodyInit, { status, headers });
+}
+
+/**
+ * Best-effort decode of the proxy's own error body. The proxy's error handler
+ * returns `{ "error": "<message>" }`; surface that string directly so error
+ * messages stay short. Fall back to the raw text or parsed JSON otherwise.
+ */
+async function readProxyErrorDetail(proxyResponse: Response): Promise<unknown> {
+    const text = await proxyResponse.text().catch(() => "");
+    if (!text) return undefined;
+    try {
+        const parsed = JSON.parse(text) as unknown;
+        if (typeof parsed === "object" && parsed !== null && "error" in parsed) {
+            const err = (parsed as { error: unknown }).error;
+            if (typeof err === "string") return err;
+        }
+        return parsed;
+    } catch {
+        return text;
+    }
+}
+
+function mapProxyError(
+    status: number,
+    statusText: string,
+    retryAfter: string | null,
+    detail: unknown,
+): EnkryptifyError {
+    if (status === 401) return new AuthenticationError();
+    if (status === 403) return new AuthorizationError();
+    if (status === 429) return new RateLimitError(retryAfter ?? undefined);
+    if (status === 400) return new ProxyValidationError(detail);
+    return new ProxyError(status, statusText, detail);
 }
