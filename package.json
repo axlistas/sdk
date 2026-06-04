@@ -53,7 +53,7 @@
         "format": "oxfmt --write .",
         "format:check": "oxfmt --check .",
         "typecheck": "tsc --noEmit",
-        "prepare": "husky || true && tsup"
+        "prepare": "husky"
     },
     "dependencies": {
         "@mswjs/interceptors": "^0.41.4"
